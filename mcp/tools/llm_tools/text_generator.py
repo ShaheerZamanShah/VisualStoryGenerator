@@ -15,9 +15,10 @@ class GroqTextGeneratorTool(BaseTool):
     def run(self, **kwargs: Any) -> Dict[str, Any]:
         prompt = kwargs.get("prompt", "")
         system = kwargs.get("system", "You are a precise assistant.")
+        temperature = kwargs.get("temperature", 0.3)
         if not prompt:
             raise ValueError("prompt is required.")
         settings = get_settings()
-        llm = ChatGroq(api_key=settings.groq_api_key, model=settings.groq_model, temperature=kwargs.get("temperature", 0.4))
+        llm = ChatGroq(api_key=settings.groq_api_key, model=settings.groq_model, temperature=temperature)
         response = llm.invoke([("system", system), ("human", prompt)])
         return {"text": response.content}

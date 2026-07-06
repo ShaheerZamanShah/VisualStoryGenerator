@@ -2,18 +2,36 @@ from __future__ import annotations
 
 from typing import Callable, Dict
 
-from agents.audio_agent.agent import AudioAgent
-from agents.story_agent.agent import StoryAgent
-from agents.video_agent.agent import VideoAgent
 from shared.utils import read_json
 
 
 class PipelineWorkflow:
     def __init__(self, progress_cb: Callable[[str, str, int, Dict], None]) -> None:
         self.progress_cb = progress_cb
-        self.story_agent = StoryAgent()
-        self.audio_agent = AudioAgent()
-        self.video_agent = VideoAgent()
+        self._story_agent = None
+        self._audio_agent = None
+        self._video_agent = None
+    
+    @property
+    def story_agent(self):
+        if self._story_agent is None:
+            from agents.story_agent.agent import StoryAgent
+            self._story_agent = StoryAgent()
+        return self._story_agent
+    
+    @property
+    def audio_agent(self):
+        if self._audio_agent is None:
+            from agents.audio_agent.agent import AudioAgent
+            self._audio_agent = AudioAgent()
+        return self._audio_agent
+    
+    @property
+    def video_agent(self):
+        if self._video_agent is None:
+            from agents.video_agent.agent import VideoAgent
+            self._video_agent = VideoAgent()
+        return self._video_agent
 
     def run_story(self, job_id: str, user_prompt: str) -> Dict:
         self.progress_cb("story", "running", 15, {"msg": "Generating story"})

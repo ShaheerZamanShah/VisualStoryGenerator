@@ -24,3 +24,9 @@ Thumbs.db
 data/outputs/
 data/temp/
 data/logs.txt
+.venv311/
+.vscode/
+backend.log
+test_results.log
+data/state_versions/*
+!data/state_versions/.gitkeep

@@ -73,16 +73,27 @@ class ClassifiedIntent(BaseModel):
 # ---------------------------------------------------------------------------
 
 _SYSTEM_PROMPT = """You are an expert video-editing assistant for a visual-novel pipeline.
-Your job is to classify a user's edit request into a structured JSON object with these fields:
+Carefully analyze the user's free-text edit request and output a STRICT JSON object with these fields:
 
 intent   - MUST be one of: character_visuals, background_visuals, audio_emotion,
-           script_dialogue, regenerate, undo, speed, scene_duration, subtitle, music, unknown
+                     script_dialogue, regenerate, undo, speed, scene_duration, subtitle, music, unknown
 target   - MUST be one of: audio, video_frame, video, script, system
-confidence - float 0.0-1.0
-params   - JSON object with any relevant extracted values, e.g.:
-           {"scene_id": "scene1", "character_name": "Alice", "trait": "blonde hair"}
+confidence - float 0.0-1.0 representing your certainty
+params   - JSON object with ONLY the parameters required to perform the edit. Use the following keys when relevant:
+                     - scene_id: string (e.g. "scene1")
+                     - character_name: string (e.g. "Alex")
+                     - trait / description: string for visuals
+                     - new_text: string OR list of dialogue objects [{"speaker":"Alex","text":"..."}]
+                     - line_index: integer index to update a specific line
+                     - emotion: string ("happy", "sad", etc.) to set dialogue emotion
+                     - duration_seconds: integer for scene duration
+                     - rate: integer speech rate (words per minute) for TTS
+                     - subtitle/music: whatever value is needed for those settings
 
-Always respond ONLY with a valid JSON object matching the schema. No extra text.
+If the edit requires changing multiple components, include all necessary params in the same object.
+Always produce parsable JSON matching the ClassifiedIntent schema and no extra commentary. Example params:
+    {"scene_id":"scene2","character_name":"Alex","new_text":"Please be kinder.","line_index":1}
+Respond ONLY with the JSON object.
 """
 
 
@@ -135,12 +146,10 @@ class EditAgentState:
 
         if self._sm and self._job_id:
             try:
-                version = self._sm.snapshot(
-                    job_id=self._job_id,
-                    state=copy.deepcopy(self._state),
-                    note="undo",
-                )
-                logger.info("Undo snapshot saved: v_%d (job=%s)", version, self._job_id)
+                # Revert persisted history and on-disk outputs to the previous snapshot.
+                self._state = self._sm.undo(self._job_id)
+                version = self._sm.snapshot(job_id=self._job_id, state=copy.deepcopy(self._state), note="undo")
+                logger.info("Undo restore + snapshot saved: v_%d (job=%s)", version, self._job_id)
             except Exception as exc:
                 logger.warning("Could not persist undo snapshot: %s", exc)
         return True
@@ -259,6 +268,7 @@ class EditAgent:
             emotion = edit_intent.params.get("emotion", "neutral")
             patch["audio_overrides"] = {**state.state.get("audio_overrides", {}), char: emotion}
             details = f"Audio emotion for '{char}' set to '{emotion}'."
+            rerender = True
 
         elif edit_intent.intent == "script_dialogue":
             scene    = edit_intent.params.get("scene_id", "all")
@@ -276,6 +286,7 @@ class EditAgent:
             rate = edit_intent.params.get("rate", 165)
             patch["tts_rate"] = rate
             details = f"TTS speech rate set to {rate} wpm."
+            rerender = True
 
         elif edit_intent.intent == "scene_duration":
             scene = edit_intent.params.get("scene_id", "all")
@@ -287,6 +298,7 @@ class EditAgent:
         elif edit_intent.intent in ("subtitle", "music"):
             patch[edit_intent.intent] = edit_intent.params
             details = f"Setting '{edit_intent.intent}' updated with {edit_intent.params}."
+            rerender = True
 
         state.apply(patch, note=edit_intent.intent)
         return EditResult(

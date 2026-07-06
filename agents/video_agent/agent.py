@@ -262,11 +262,41 @@ class VideoAgent:
         audio_clip    = AudioFileClip(master_audio_path)
         audio_duration = audio_clip.duration
 
-        final_video = concatenate_videoclips(clips, method="compose")
+        # Calculate total video duration from scenes
+        total_video_duration = sum(c.duration for c in clips if hasattr(c, 'duration'))
+        
+        self.logger.info(
+            "Video duration: %.2fs, Audio duration: %.2fs",
+            total_video_duration,
+            audio_duration
+        )
 
-        # Trim so video ends exactly when dialogue ends
-        final_video = final_video.subclip(0, min(final_video.duration, audio_duration))
-        final_video = final_video.set_audio(audio_clip.subclip(0, final_video.duration))
+        # Chain scenes sequentially (not composite/overlap)
+        final_video = concatenate_videoclips(clips)
+        
+        # Trim each clip to not exceed audio duration before concatenating
+        # to avoid moviepy composite indexing issues
+        if total_video_duration > audio_duration:
+            # Reconstruct clips, trimming the last one if needed
+            trimmed_clips = []
+            accumulated_time = 0.0
+            
+            for clip in clips:
+                clip_duration = clip.duration
+                if accumulated_time + clip_duration <= audio_duration:
+                    trimmed_clips.append(clip)
+                    accumulated_time += clip_duration
+                else:
+                    # Trim the last clip to fit
+                    remaining = audio_duration - accumulated_time
+                    if remaining > 0:
+                        trimmed_clips.append(clip.subclip(0, remaining))
+                    break
+            
+            if trimmed_clips:
+                final_video = concatenate_videoclips(trimmed_clips)
+        
+        final_video = final_video.set_audio(audio_clip)
 
         output_path = root / "final_output.mp4"
         final_video.write_videofile(

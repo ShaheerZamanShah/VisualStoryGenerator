@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import textwrap
+import time
 from pathlib import Path
 from typing import Any, Dict
 
@@ -51,14 +53,61 @@ class CoquiTTSTool(BaseTool):
                 voice_id_line = f"engine.setProperty('voice', r'{safe_id}')"
 
         # Run pyttsx3 in a subprocess to avoid SAPI5 COM deadlocks in thread pools
-        script = f"""
-import pyttsx3
-engine = pyttsx3.init()
-engine.setProperty('rate', 165)
-{voice_id_line}
-engine.save_to_file({repr(text)}, {repr(str(output_path))})
-engine.runAndWait()
-"""
-        subprocess.run([sys.executable, "-c", script], check=True)
-        self.logger.info("Generated TTS line at %s (gender=%s)", output_path, gender)
+        rate = int(kwargs.get("rate", 165))
+        
+        # Use textwrap.dedent to properly format the script
+        script = textwrap.dedent(f"""
+            import pyttsx3
+            import time
+            engine = pyttsx3.init()
+            engine.setProperty('rate', {rate})
+            {voice_id_line}
+            engine.save_to_file({repr(text)}, {repr(str(output_path))})
+            engine.runAndWait()
+            time.sleep(0.5)
+        """).strip()
+        max_retries = 2
+        for attempt in range(max_retries):
+            try:
+                result = subprocess.run(
+                    [sys.executable, "-c", script], 
+                    check=True, 
+                    capture_output=True, 
+                    timeout=30,
+                    text=True
+                )
+                
+                # Validate file was created
+                if output_path.exists():
+                    file_size = output_path.stat().st_size
+                    if file_size > 100:  # Valid WAV file
+                        self.logger.info("Generated TTS line at %s (gender=%s, size=%d bytes)", output_path, gender, file_size)
+                        return {"audio_path": str(output_path)}
+                    else:
+                        self.logger.warning("TTS created empty file (%d bytes), retrying...", file_size)
+                else:
+                    self.logger.warning("TTS file not created, retrying...")
+                    
+            except subprocess.TimeoutExpired:
+                self.logger.warning("TTS subprocess timed out on attempt %d", attempt + 1)
+            except Exception as e:
+                self.logger.warning("TTS generation error on attempt %d: %s", attempt + 1, e)
+            
+            if attempt < max_retries - 1:
+                time.sleep(1)  # Wait before retry
+        
+        # Fallback: create minimal valid WAV file to prevent pipeline break
+        self.logger.warning("TTS failed after %d attempts. Creating fallback silence file.", max_retries)
+        try:
+            import numpy as np
+            from scipy.io import wavfile as sp_wavfile
+            # Generate 1 second of silence at 22050 Hz
+            sr = 22050
+            silence = np.zeros(sr, dtype=np.int16)
+            sp_wavfile.write(str(output_path), sr, silence)
+            self.logger.info("Created fallback silence audio: %s", output_path)
+        except Exception as e:
+            self.logger.error("Failed to create fallback audio: %s", e)
+            raise RuntimeError(f"TTS failed and could not create fallback: {e}")
+        
         return {"audio_path": str(output_path)}

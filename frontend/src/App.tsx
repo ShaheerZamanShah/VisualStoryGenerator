@@ -3,39 +3,101 @@ import EditPanel from "./components/EditPanel";
 import PhaseProgress, { type ProgressEvent } from "./components/PhaseProgress";
 import PromptForm from "./components/PromptForm";
 import VideoPlayer from "./components/VideoPlayer";
+import VersionHistoryPanel from "./components/VersionHistoryPanel";
 
-const API_BASE = "http://localhost:8001";
+const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8001";
+
+function getWsBase(apiBase: string) {
+  try {
+    const url = new URL(apiBase);
+    return `${url.protocol === "https:" ? "wss:" : "ws:"}//${url.host}`;
+  } catch {
+    return "ws://localhost:8001";
+  }
+}
 
 export default function App() {
   const [jobId, setJobId] = useState<string>();
   const [events, setEvents] = useState<ProgressEvent[]>([]);
   const [videoPath, setVideoPath] = useState<string>();
   const [loading, setLoading] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [versions, setVersions] = useState<Array<{ version: number; timestamp: string; note: string }>>([]);
 
-  const socketUrl = useMemo(() => (jobId ? `ws://localhost:8001/ws/progress/${jobId}` : undefined), [jobId]);
+  const socketBase = useMemo(() => getWsBase(API_BASE), []);
+  const socketUrl = useMemo(() => (jobId ? `${socketBase}/ws/progress/${jobId}` : undefined), [jobId, socketBase]);
 
   const start = async (prompt: string) => {
     setLoading(true);
     setEvents([]);
-    const res = await fetch(`${API_BASE}/api/pipeline/start`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt })
-    });
-    const data = await res.json();
-    setJobId(data.job_id);
-    setLoading(false);
+    setVersions([]);
+    try {
+      const res = await fetch(`${API_BASE}/api/pipeline/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt })
+      });
 
-    const ws = new WebSocket(`ws://localhost:8001/ws/progress/${data.job_id}`);
-    ws.onopen = () => ws.send("subscribe");
-    ws.onmessage = (ev) => {
-      const payload = JSON.parse(ev.data) as ProgressEvent;
-      setEvents((prev) => [...prev, payload]);
-      if (payload.phase === "done") {
-        const path = String((payload.meta?.final_video_path as string) || "");
-        if (path) setVideoPath(`${API_BASE}/api/assets/${data.job_id}/final_output.mp4`);
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`Backend responded with ${res.status}: ${text}`);
       }
-    };
+
+      const data = (await res.json()) as { job_id: string };
+      setJobId(data.job_id);
+      await fetchHistory(data.job_id);
+
+      const ws = new WebSocket(`${socketBase}/ws/progress/${data.job_id}`);
+      ws.onopen = () => ws.send("subscribe");
+      ws.onmessage = (ev) => {
+        const payload = JSON.parse(ev.data) as ProgressEvent;
+        setEvents((prev) => [...prev, payload]);
+        if (payload.phase === "done") {
+          const path = String((payload.meta?.final_video_path as string) || "");
+          if (path) {
+            // Ensure the asset is available before setting src; try a few times to avoid race conditions.
+            (async function waitForAsset(retries = 5) {
+              const urlBase = `${API_BASE}/api/assets/${data.job_id}/final_output.mp4`;
+              for (let i = 0; i < retries; i++) {
+                try {
+                  const head = await fetch(`${urlBase}?ts=${Date.now()}`, { method: "HEAD" });
+                  if (head.ok) {
+                    setVideoPath(`${urlBase}?ts=${Date.now()}`);
+                    return;
+                  }
+                } catch (e) {
+                  // ignore network errors and retry
+                }
+                await new Promise((res) => setTimeout(res, 500));
+              }
+              // Last resort: set the URL with cache-busting query param
+              setVideoPath(`${API_BASE}/api/assets/${data.job_id}/final_output.mp4?ts=${Date.now()}`);
+            })();
+          }
+        }
+      };
+    } catch (error) {
+      console.error("Failed to start pipeline:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchHistory = async (incomingJobId?: string) => {
+    const activeJobId = incomingJobId || jobId;
+    if (!activeJobId) return;
+    setHistoryLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/edit/${activeJobId}/history`);
+      if (!res.ok) {
+        setVersions([]);
+        return;
+      }
+      const data = (await res.json()) as { versions?: Array<{ version: number; timestamp: string; note: string }> };
+      setVersions(data.versions || []);
+    } finally {
+      setHistoryLoading(false);
+    }
   };
 
   const applyEdit = async (query: string) => {
@@ -45,11 +107,13 @@ export default function App() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query })
     });
+    await fetchHistory();
   };
 
   const undo = async () => {
     if (!jobId) return;
     await fetch(`${API_BASE}/api/edit/${jobId}/undo`, { method: "POST" });
+    await fetchHistory();
   };
 
   return (
@@ -60,6 +124,7 @@ export default function App() {
       <PhaseProgress events={events} />
       <VideoPlayer src={videoPath} />
       <EditPanel jobId={jobId} onApply={applyEdit} onUndo={undo} />
+      <VersionHistoryPanel jobId={jobId} versions={versions} loading={historyLoading} onRefresh={fetchHistory} />
       {socketUrl && <small className="muted">WebSocket: {socketUrl}</small>}
     </main>
   );

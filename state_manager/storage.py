@@ -11,3 +11,9 @@ class Storage:
 
     def job_dir(self, job_id: str) -> Path:
         return ensure_dir(self.root / job_id)
+
+    def assets_dir(self, job_id: str, version: int) -> Path:
+        return ensure_dir(self.job_dir(job_id) / f"assets_v_{version}")
+
+    def outputs_dir(self, job_id: str) -> Path:
+        return Path("data/outputs") / job_id

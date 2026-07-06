@@ -35,6 +35,16 @@ class AudioAgent:
 
     def run(self, job_id: str, story_spec_data: Dict) -> Dict:
         story = StorySpec.model_validate(story_spec_data)
+        # Allow optional TTS rate override provided under story_spec_data['meta']['tts_rate']
+        tts_rate = None
+        if isinstance(story_spec_data, dict):
+            meta = story_spec_data.get("meta") or {}
+            tts_rate = meta.get("tts_rate") or story_spec_data.get("tts_rate")
+            if tts_rate is not None:
+                try:
+                    tts_rate = int(tts_rate)
+                except Exception:
+                    tts_rate = None
         out_dir = Path("data/outputs") / job_id / "audio"
         out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -52,13 +62,28 @@ class AudioAgent:
             for idx, line in enumerate(scene.dialogue):
                 file_path = out_dir / f"{scene.scene_id}_{idx:02d}_{line.speaker}.wav"
                 speaker_gender = gender_map.get(line.speaker, "male")
+                rate = tts_rate if tts_rate is not None else 165
+                emotion = (getattr(line, "emotion", None) or "neutral").lower()
+                if emotion in {"sad", "somber", "calm"}:
+                    rate = max(120, rate - 20)
+                elif emotion in {"happy", "excited", "energetic"}:
+                    rate = min(210, rate + 15)
+                elif emotion in {"angry", "tense"}:
+                    rate = min(220, rate + 10)
                 self.tts_tool.run(
                     text=line.text,
                     output_path=str(file_path),
                     gender=speaker_gender,
+                    rate=rate,
                 )
                 sr, data = wavfile.read(str(file_path))
                 duration_ms = int((len(data) / sr) * 1000)
+                
+                # Validate that we have actual audio data
+                if duration_ms <= 0:
+                    self.logger.warning("Audio file has zero duration: %s. Using minimum 100ms.", file_path)
+                    duration_ms = 100
+                
                 start_ms = current_ms
                 end_ms = current_ms + duration_ms
                 entries.append(
