@@ -5,14 +5,21 @@ import PromptForm from "./components/PromptForm";
 import VideoPlayer from "./components/VideoPlayer";
 import VersionHistoryPanel from "./components/VersionHistoryPanel";
 
-const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8001";
+const API_BASE =
+  import.meta.env.VITE_API_BASE ??
+  (import.meta.env.DEV ? "http://localhost:8001" : "");
 
 function getWsBase(apiBase: string) {
+  if (!apiBase) {
+    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    return `${proto}//${window.location.host}`;
+  }
   try {
     const url = new URL(apiBase);
     return `${url.protocol === "https:" ? "wss:" : "ws:"}//${url.host}`;
   } catch {
-    return "ws://localhost:8001";
+    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    return `${proto}//${window.location.host}`;
   }
 }
 

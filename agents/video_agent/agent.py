@@ -11,7 +11,7 @@ from moviepy.editor import (
     VideoClip,
     concatenate_videoclips,
 )
-from PIL import Image, ImageDraw, ImageEnhance
+from PIL import Image, ImageDraw, ImageEnhance, ImageFont
 from scipy.io import wavfile
 
 from mcp.tools.vision_tools import HFImageGenTool, ImageBackgroundRemovalTool
@@ -30,6 +30,17 @@ CHAR_TOP_PAD = int(H * 0.12)  # character top edge: 87px from top of frame
 MOUTH_BODY_FRAC = 0.20   # 20% down the character body = mouth area
 MOUTH_W_FRAC   = 0.028   # relative to W
 MOUTH_H_FRAC   = 0.018   # relative to H
+
+# Subtitle box — sized relative to 1280×720 frame
+SUBTITLE_BOTTOM_MARGIN = int(H * 0.055)
+SUBTITLE_MAX_WIDTH     = int(W * 0.88)
+SUBTITLE_FONT_SIZE     = int(H * 0.032)
+SUBTITLE_SPEAKER_SIZE  = int(H * 0.028)
+SUBTITLE_LINE_GAP      = int(H * 0.010)
+SUBTITLE_BOX_PAD_X     = int(W * 0.020)
+SUBTITLE_BOX_PAD_Y     = int(H * 0.016)
+SUBTITLE_BOX_RADIUS    = 12
+SUBTITLE_MAX_BOX_HEIGHT = int(H * 0.22)
 
 
 class VideoAgent:
@@ -134,6 +145,135 @@ class VideoAgent:
             .set_position(("center", CHAR_TOP_PAD))
         )
 
+    # ── Dialogue subtitles ─────────────────────────────────────────────────
+    def _load_subtitle_font(self, size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+        candidates = [
+            "C:/Windows/Fonts/segoeuib.ttf" if bold else "C:/Windows/Fonts/segoeui.ttf",
+            "C:/Windows/Fonts/arialbd.ttf" if bold else "C:/Windows/Fonts/arial.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "arialbd.ttf" if bold else "arial.ttf",
+        ]
+        for path in candidates:
+            try:
+                return ImageFont.truetype(path, size=size)
+            except OSError:
+                continue
+        return ImageFont.load_default()
+
+    def _wrap_text_lines(self, text: str, font: ImageFont.ImageFont, max_width: int) -> List[str]:
+        words = text.split()
+        if not words:
+            return [""]
+
+        probe = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+        lines: List[str] = []
+        current: List[str] = []
+
+        for word in words:
+            trial = " ".join(current + [word])
+            bbox = probe.textbbox((0, 0), trial, font=font)
+            if bbox[2] - bbox[0] <= max_width:
+                current.append(word)
+            else:
+                if current:
+                    lines.append(" ".join(current))
+                current = [word]
+        if current:
+            lines.append(" ".join(current))
+        return lines
+
+    def _subtitle_line_block(
+        self,
+        speaker: str,
+        text: str,
+        dialogue_font: ImageFont.ImageFont,
+        speaker_font: ImageFont.ImageFont,
+    ) -> Tuple[List[Tuple[str, ImageFont.ImageFont, Tuple[int, int, int, int]]], int, int]:
+        """Return render rows, block width, and block height for one subtitle."""
+        probe = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+        inner_max = SUBTITLE_MAX_WIDTH - 2 * SUBTITLE_BOX_PAD_X
+
+        rows: List[Tuple[str, ImageFont.ImageFont, Tuple[int, int, int, int]]] = []
+        if speaker.strip():
+            rows.append((speaker.strip(), speaker_font, (255, 220, 120, 255)))
+
+        for line in self._wrap_text_lines(text.strip(), dialogue_font, inner_max):
+            rows.append((line, dialogue_font, (255, 255, 255, 255)))
+
+        block_w = 0
+        block_h = 0
+        for idx, (line, font, _) in enumerate(rows):
+            bbox = probe.textbbox((0, 0), line, font=font)
+            block_w = max(block_w, bbox[2] - bbox[0])
+            block_h += bbox[3] - bbox[1]
+            if idx < len(rows) - 1:
+                block_h += SUBTITLE_LINE_GAP
+
+        block_w = min(block_w, inner_max)
+        block_w += 2 * SUBTITLE_BOX_PAD_X
+        block_h += 2 * SUBTITLE_BOX_PAD_Y
+        return rows, block_w, block_h
+
+    def _create_subtitle_overlay(self, speaker: str, text: str) -> np.ndarray:
+        """
+        Build a full-frame transparent RGBA overlay with a centred subtitle box
+        anchored near the bottom of the frame.
+        """
+        dialogue_size = SUBTITLE_FONT_SIZE
+        speaker_size = SUBTITLE_SPEAKER_SIZE
+        rows: List[Tuple[str, ImageFont.ImageFont, Tuple[int, int, int, int]]] = []
+        block_w = 0
+        block_h = 0
+
+        while dialogue_size >= int(H * 0.028):
+            dialogue_font = self._load_subtitle_font(dialogue_size, bold=True)
+            speaker_font = self._load_subtitle_font(speaker_size, bold=True)
+            rows, block_w, block_h = self._subtitle_line_block(
+                speaker, text, dialogue_font, speaker_font
+            )
+            if block_h <= SUBTITLE_MAX_BOX_HEIGHT:
+                break
+            dialogue_size -= 2
+            speaker_size = max(int(H * 0.028), speaker_size - 2)
+
+        canvas = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(canvas)
+
+        box_x0 = (W - block_w) // 2
+        box_y1 = H - SUBTITLE_BOTTOM_MARGIN
+        box_y0 = box_y1 - block_h
+        box_x1 = box_x0 + block_w
+
+        draw.rounded_rectangle(
+            (box_x0, box_y0, box_x1, box_y1),
+            radius=SUBTITLE_BOX_RADIUS,
+            fill=(8, 12, 24, 210),
+            outline=(255, 255, 255, 90),
+            width=2,
+        )
+
+        text_y = box_y0 + SUBTITLE_BOX_PAD_Y
+        for idx, (line, font, color) in enumerate(rows):
+            bbox = draw.textbbox((0, 0), line, font=font)
+            line_w = bbox[2] - bbox[0]
+            line_h = bbox[3] - bbox[1]
+            text_x = box_x0 + (block_w - line_w) // 2
+            draw.text((text_x, text_y), line, font=font, fill=color)
+            text_y += line_h
+            if idx < len(rows) - 1:
+                text_y += SUBTITLE_LINE_GAP
+
+        return np.array(canvas)
+
+    def _subtitle_clip(self, speaker: str, text: str, start: float, duration: float) -> ImageClip:
+        overlay = self._create_subtitle_overlay(speaker, text)
+        rgb = overlay[:, :, :3]
+        alpha = overlay[:, :, 3] / 255.0
+        dur = max(duration, 0.05)
+        clip = ImageClip(rgb).set_start(start).set_duration(dur)
+        mask = ImageClip(alpha, ismask=True).set_start(start).set_duration(dur)
+        return clip.set_mask(mask)
+
     # ── Main run ───────────────────────────────────────────────────────────
     def run(
         self,
@@ -203,9 +343,10 @@ class VideoAgent:
             # 3b. Animated background
             bg_clip = self._make_animated_bg(bg_path, scene_duration)
 
-            # 3c. Character + mouth clips
-            char_clips:  List = []
-            mouth_clips: List = []
+            # 3c. Character + mouth + subtitle clips
+            char_clips:     List = []
+            mouth_clips:    List = []
+            subtitle_clips: List = []
             last_end = 0.0
 
             for entry in scene_entries:
@@ -223,6 +364,16 @@ class VideoAgent:
                     char_sprites[entry.speaker], local_start, local_end - local_start
                 ))
                 last_end = local_end
+
+                # Dialogue subtitle — visible exactly while the line is spoken
+                subtitle_clips.append(
+                    self._subtitle_clip(
+                        entry.speaker,
+                        entry.text,
+                        local_start,
+                        local_end - local_start,
+                    )
+                )
 
                 # Mouth animation: sample every 80ms during speaking
                 sr, audio_data = self._get_audio_data(entry.audio_file)
@@ -246,9 +397,9 @@ class VideoAgent:
                     char_sprites[tail_speaker], last_end, scene_duration - last_end
                 ))
 
-            # 3d. Composite: bg → character → mouth
+            # 3d. Composite: bg → character → mouth → subtitles
             scene_clip = CompositeVideoClip(
-                [bg_clip] + char_clips + mouth_clips,
+                [bg_clip] + char_clips + mouth_clips + subtitle_clips,
                 size=(W, H),
             ).set_duration(scene_duration)
 

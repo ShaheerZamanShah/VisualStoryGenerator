@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse
 router = APIRouter(prefix="/api/assets", tags=["assets"])
 
 
-@router.get("/{job_id}/{name}")
+@router.api_route("/{job_id}/{name}", methods=["GET", "HEAD"])
 async def get_asset(job_id: str, name: str):
     path = Path("data/outputs") / job_id / "video" / name
     if not path.exists():

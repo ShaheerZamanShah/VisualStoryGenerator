@@ -6,6 +6,8 @@ __pycache__/
 .Python
 env/
 venv/
+.venv/
+.venv311/
 ENV/
 env.bak/
 venv.bak/
@@ -15,18 +17,30 @@ node_modules/
 dist/
 build/
 .npm/
+frontend/dist/
+frontend/tsconfig.tsbuildinfo
 
 # OS Files
 .DS_Store
 Thumbs.db
 
-# Project specific
-data/outputs/
-data/temp/
-data/logs.txt
-.venv311/
+# IDE
 .vscode/
+.idea/
+
+# Testing / logs
+.pytest_cache/
+*.log
 backend.log
 test_results.log
+
+# Project specific — generated at runtime
+data/outputs/*
+!data/outputs/.gitkeep
+data/temp/
+data/logs.txt
 data/state_versions/*
 !data/state_versions/.gitkeep
+
+# Large media artifacts
+docs/demo/*.mp4
