@@ -1,20 +1,21 @@
-# Render Blueprint — https://render.com/docs/blueprint-spec
+# Render Blueprint — FREE tier ($0/month)
 #
 # Deploy: Render Dashboard → New → Blueprint → connect this repo
-# Or: render deploy
 #
-# Recommended: Starter plan or higher for backend (video pipeline needs RAM).
-# Free tier works for testing but services spin down after inactivity and
-# generated videos are lost on restart (no persistent disk on Free).
+# Free tier limits:
+#   - Backend sleeps after 15 min inactivity (~30s cold start)
+#   - 512 MB RAM — video generation may fail or timeout on heavy jobs
+#   - No persistent disk — generated videos are lost on restart/redeploy
+#   - Static frontend is always free with no sleep
 
 services:
-  # ── Backend API (Docker) ──────────────────────────────────────────────
+  # ── Backend API (Docker) — FREE ───────────────────────────────────────
   - type: web
     name: visualstory-backend
     runtime: docker
     dockerfilePath: ./Dockerfile
     dockerContext: .
-    plan: starter
+    plan: free
     region: oregon
     healthCheckPath: /health
     envVars:
@@ -29,14 +30,8 @@ services:
           type: web
           name: visualstory-frontend
           envVarKey: RENDER_EXTERNAL_URL
-    # Persistent storage for generated videos (Starter plan+).
-    # Remove this block on Free tier — data will be ephemeral.
-    disk:
-      name: visualstory-data
-      mountPath: /app/data
-      sizeGB: 1
 
-  # ── Frontend (Static Site) ────────────────────────────────────────────
+  # ── Frontend (Static Site) — FREE ─────────────────────────────────────
   - type: web
     name: visualstory-frontend
     runtime: static
