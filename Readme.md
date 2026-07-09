@@ -21,13 +21,14 @@
 13. [Setup & Installation](#setup--installation)
 14. [Running the Application](#running-the-application)
 15. [Docker Deployment](#docker-deployment)
-16. [Running Tests](#running-tests)
-17. [Edit Agent](#edit-agent)
-18. [Generated Output Files](#generated-output-files)
-19. [Environment Variables](#environment-variables)
-20. [Example Prompts](#example-prompts)
-21. [Troubleshooting](#troubleshooting)
-22. [License](#license)
+16. [Render Deployment](#render-deployment)
+17. [Running Tests](#running-tests)
+18. [Edit Agent](#edit-agent)
+19. [Generated Output Files](#generated-output-files)
+20. [Environment Variables](#environment-variables)
+21. [Example Prompts](#example-prompts)
+22. [Troubleshooting](#troubleshooting)
+23. [License](#license)
 
 ---
 
@@ -750,6 +751,89 @@ docker compose up -d --build
 ```
 
 Open `http://your-server-ip:8080` in your browser.
+
+---
+
+## Render Deployment
+
+Deploy to [Render](https://render.com) using the included **`render.yaml`** blueprint. This creates two services:
+
+| Service | Type | URL |
+|---------|------|-----|
+| `visualstory-backend` | Docker Web Service | `https://visualstory-backend.onrender.com` |
+| `visualstory-frontend` | Static Site | `https://visualstory-frontend.onrender.com` |
+
+The frontend is built with `VITE_API_BASE` pointing at the backend automatically. WebSockets connect directly to the backend over `wss://`.
+
+### Step-by-step
+
+1. **Push this repo to GitHub** (already done if you cloned from GitHub)
+
+2. **Create a Render account** at https://render.com
+
+3. **New → Blueprint** → connect `ShaheerZamanShah/VisualStoryGenerator`
+
+4. Render reads `render.yaml` and creates both services
+
+5. When prompted, set **`GROQ_API_KEY`** (mark as secret)
+
+6. Click **Apply** and wait for both services to deploy (~5–10 min first build)
+
+7. Open your frontend URL: `https://visualstory-frontend.onrender.com`
+
+### Manual setup (without Blueprint)
+
+If you prefer creating services manually:
+
+**Backend (Web Service → Docker)**
+- Repository: `ShaheerZamanShah/VisualStoryGenerator`
+- Dockerfile path: `./Dockerfile`
+- Plan: **Starter** ($7/mo) recommended
+- Health check path: `/health`
+- Environment variables:
+  - `GROQ_API_KEY` = your key
+  - `TTS_ENGINE` = `edge_tts`
+  - `FRONTEND_ORIGIN` = `https://your-frontend-name.onrender.com`
+- Add a **Persistent Disk** (1 GB, mount at `/app/data`) on Starter+
+
+**Frontend (Static Site)**
+- Root directory: `frontend`
+- Build command: `npm install && npm run build`
+- Publish directory: `dist`
+- Environment variable:
+  - `VITE_API_BASE` = `https://your-backend-name.onrender.com`
+
+### Render architecture
+
+```
+Browser → https://visualstory-frontend.onrender.com
+              │  (React static site)
+              │  API calls + WebSocket
+              ▼
+         https://visualstory-backend.onrender.com
+              │  FastAPI + edge-tts + rembg + MoviePy
+              ▼
+         Persistent disk: /app/data  (Starter plan+)
+```
+
+### Plan recommendations
+
+| Plan | RAM | Notes |
+|------|-----|-------|
+| **Free** | 512 MB | OK for testing UI; video generation may OOM or timeout. No persistent disk. |
+| **Starter** | 512 MB | Persistent disk included. Minimum for keeping generated videos. |
+| **Standard** | 2 GB | **Recommended** for reliable video pipeline (rembg + MoviePy) |
+
+### Render troubleshooting
+
+| Problem | Solution |
+|---------|----------|
+| Build fails on backend | Check Render logs; first build downloads rembg model (~170 MB) |
+| CORS errors | Set `FRONTEND_ORIGIN` to exact frontend URL (with `https://`) |
+| WebSocket not connecting | Ensure `VITE_API_BASE` is the backend URL (not frontend) |
+| Service times out generating video | Upgrade to Standard plan (2 GB RAM) |
+| Videos disappear after restart | Add persistent disk on `/app/data` (Starter+) |
+| Backend sleeps on Free tier | First request after idle takes ~30s to wake up |
 
 ---
 

@@ -1,0 +1,55 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+#
+# Deploy: Render Dashboard → New → Blueprint → connect this repo
+# Or: render deploy
+#
+# Recommended: Starter plan or higher for backend (video pipeline needs RAM).
+# Free tier works for testing but services spin down after inactivity and
+# generated videos are lost on restart (no persistent disk on Free).
+
+services:
+  # ── Backend API (Docker) ──────────────────────────────────────────────
+  - type: web
+    name: visualstory-backend
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: starter
+    region: oregon
+    healthCheckPath: /health
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: llama-3.3-70b-versatile
+      - key: TTS_ENGINE
+        value: edge_tts
+      - key: FRONTEND_ORIGIN
+        fromService:
+          type: web
+          name: visualstory-frontend
+          envVarKey: RENDER_EXTERNAL_URL
+    # Persistent storage for generated videos (Starter plan+).
+    # Remove this block on Free tier — data will be ephemeral.
+    disk:
+      name: visualstory-data
+      mountPath: /app/data
+      sizeGB: 1
+
+  # ── Frontend (Static Site) ────────────────────────────────────────────
+  - type: web
+    name: visualstory-frontend
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_API_BASE
+        fromService:
+          type: web
+          name: visualstory-backend
+          envVarKey: RENDER_EXTERNAL_URL
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html

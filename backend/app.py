@@ -13,6 +13,16 @@ from shared.utils import get_settings
 settings = get_settings()
 app = FastAPI(title="AI Powered Animated Video Generation System")
 
+_cors_origins = [
+    settings.frontend_origin,
+    "http://localhost",
+    "http://localhost:80",
+    "http://localhost:8080",
+    "http://localhost:5173",
+    "http://localhost:5174",
+]
+_cors_origins = list(dict.fromkeys(origin for origin in _cors_origins if origin))
+
 
 class CSPMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
@@ -24,14 +34,8 @@ class CSPMiddleware(BaseHTTPMiddleware):
 app.add_middleware(CSPMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        settings.frontend_origin,
-        "http://localhost",
-        "http://localhost:80",
-        "http://localhost:8080",
-        "http://localhost:5173",
-        "http://localhost:5174",
-    ],
+    allow_origins=_cors_origins,
+    allow_origin_regex=r"https://.*\.onrender\.com",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
