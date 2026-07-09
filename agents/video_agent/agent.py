@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import numpy as np
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -18,6 +19,7 @@ from mcp.tools.vision_tools import HFImageGenTool, ImageBackgroundRemovalTool
 from shared.constants import DEFAULT_VIDEO_FPS, DEFAULT_VIDEO_RESOLUTION
 from shared.schemas import StorySpec, TimingManifest
 from shared.utils import setup_logger
+from shared.utils.cloud import is_cloud_mode
 
 W, H = DEFAULT_VIDEO_RESOLUTION  # 1280 × 720
 
@@ -112,15 +114,13 @@ class VideoAgent:
         bg_img = bg_img.resize((bg_w, bg_h), Image.LANCZOS)
         bg_arr = np.array(bg_img, dtype=np.uint8)
 
-        # Vignette mask (darker at edges)
-        vig = np.ones((H, W), dtype=np.float32)
+        # Vignette mask (darker at edges) — vectorised for cloud performance
+        yy, xx = np.mgrid[0:H, 0:W]
         cx, cy = W // 2, H // 2
-        for yy in range(H):
-            for xx in range(W):
-                dx = (xx - cx) / (W / 2)
-                dy = (yy - cy) / (H / 2)
-                vig[yy, xx] = max(0.5, 1.0 - 0.4 * (dx**2 + dy**2))
-        vig_rgb = np.stack([vig, vig, vig], axis=2)  # (H, W, 3)
+        dx = (xx - cx) / (W / 2)
+        dy = (yy - cy) / (H / 2)
+        vig = np.maximum(0.5, 1.0 - 0.4 * (dx**2 + dy**2)).astype(np.float32)
+        vig_rgb = np.stack([vig, vig, vig], axis=2)
 
         def make_frame(t: float) -> np.ndarray:
             p = t / max(duration, 0.001)
@@ -405,6 +405,7 @@ class VideoAgent:
 
             clips.append(scene_clip)
             self.logger.info("Scene %s built (%.2fs).", scene.scene_id, scene_duration)
+            gc.collect()
 
         if not clips:
             raise RuntimeError("No scene clips were produced — check timing manifest.")
@@ -450,15 +451,24 @@ class VideoAgent:
         final_video = final_video.set_audio(audio_clip)
 
         output_path = root / "final_output.mp4"
+        cloud = is_cloud_mode()
         final_video.write_videofile(
             str(output_path),
             fps=DEFAULT_VIDEO_FPS,
             codec="libx264",
             audio_codec="aac",
-            preset="fast",
-            ffmpeg_params=["-crf", "18"],   # high quality encode
-            threads=4,
+            preset="ultrafast" if cloud else "fast",
+            ffmpeg_params=["-crf", "23" if cloud else "18"],
+            threads=1 if cloud else 4,
             logger=None,
         )
+        try:
+            final_video.close()
+            audio_clip.close()
+            for clip in clips:
+                clip.close()
+        except Exception:
+            pass
+        gc.collect()
         self.logger.info("✅ Final video: %s (%.1fs)", output_path, final_video.duration)
         return {"final_video_path": str(output_path)}

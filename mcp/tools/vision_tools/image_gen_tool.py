@@ -10,6 +10,7 @@ import requests
 from PIL import Image, ImageDraw, ImageFont
 
 from mcp.base_tool import BaseTool
+from shared.constants import IMAGE_BG_SIZE, IMAGE_CHAR_SIZE
 
 
 class HFImageGenTool(BaseTool):
@@ -17,8 +18,10 @@ class HFImageGenTool(BaseTool):
     description = "Generate images using free Pollinations API (formerly Hugging Face)."
 
     def _call_pollinations(self, prompt: str, kind: str) -> Image.Image:
-        # Optimize prompt resolution based on kind
-        width, height = (1280, 720) if kind == "background" else (768, 1024)
+        if kind == "background":
+            width, height = IMAGE_BG_SIZE
+        else:
+            width, height = IMAGE_CHAR_SIZE
         
         # We append some style tags for better visual novel consistency
         style_suffix = ", high quality anime visual novel style, masterpiece"
@@ -81,7 +84,7 @@ class HFImageGenTool(BaseTool):
         
         # All retries exhausted. Return a deterministic placeholder so the
         # pipeline can still complete instead of failing the whole job.
-        width, height = (1280, 720) if kind == "background" else (768, 1024)
+        width, height = IMAGE_BG_SIZE if kind == "background" else IMAGE_CHAR_SIZE
         placeholder = Image.new("RGBA", (width, height), (20, 24, 38, 255))
         draw = ImageDraw.Draw(placeholder)
         title = "Image generation unavailable"

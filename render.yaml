@@ -25,6 +25,10 @@ services:
         value: llama-3.3-70b-versatile
       - key: TTS_ENGINE
         value: edge_tts
+      - key: CLOUD_MODE
+        value: "1"
+      - key: OMP_NUM_THREADS
+        value: "1"
       - key: FRONTEND_ORIGIN
         fromService:
           type: web

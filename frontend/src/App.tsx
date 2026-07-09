@@ -28,6 +28,7 @@ export default function App() {
   const [events, setEvents] = useState<ProgressEvent[]>([]);
   const [videoPath, setVideoPath] = useState<string>();
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string>();
   const [historyLoading, setHistoryLoading] = useState(false);
   const [versions, setVersions] = useState<Array<{ version: number; timestamp: string; note: string }>>([]);
 
@@ -36,6 +37,7 @@ export default function App() {
 
   const start = async (prompt: string) => {
     setLoading(true);
+    setError(undefined);
     setEvents([]);
     setVersions([]);
     try {
@@ -59,6 +61,9 @@ export default function App() {
       ws.onmessage = (ev) => {
         const payload = JSON.parse(ev.data) as ProgressEvent;
         setEvents((prev) => [...prev, payload]);
+        if (payload.phase === "error") {
+          setError(String((payload.meta?.error as string) || payload.message || "Video generation failed."));
+        }
         if (payload.phase === "done") {
           const path = String((payload.meta?.final_video_path as string) || "");
           if (path) {
@@ -84,6 +89,8 @@ export default function App() {
         }
       };
     } catch (error) {
+      const msg = error instanceof Error ? error.message : "Failed to start pipeline.";
+      setError(msg);
       console.error("Failed to start pipeline:", error);
     } finally {
       setLoading(false);
@@ -128,6 +135,7 @@ export default function App() {
       <h1>AI-Powered Animated Video Generation</h1>
       <p className="sub">Dark-mode orchestration dashboard with real-time multi-agent progress.</p>
       <PromptForm onSubmit={start} loading={loading} />
+      {error && <p className="error-banner">{error}</p>}
       <PhaseProgress events={events} />
       <VideoPlayer src={videoPath} />
       <EditPanel jobId={jobId} onApply={applyEdit} onUndo={undo} />

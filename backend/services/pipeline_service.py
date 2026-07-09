@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict
@@ -24,14 +25,17 @@ class PipelineService:
 
     async def run_job(self, job_id: str) -> None:
         state = self.jobs[job_id]
+        loop = asyncio.get_running_loop()
         try:
-            loop = asyncio.get_running_loop()
-            graph = build_pipeline_graph(
-                progress_cb=lambda phase, status, percent, meta: asyncio.run_coroutine_threadsafe(
-                    self._emit(job_id, phase, status, percent, meta), loop
+            def _run_pipeline():
+                graph = build_pipeline_graph(
+                    progress_cb=lambda phase, status, percent, meta: asyncio.run_coroutine_threadsafe(
+                        self._emit(job_id, phase, status, percent, meta), loop
+                    )
                 )
-            )
-            out = await graph.ainvoke({"job_id": job_id, "user_prompt": state["user_prompt"]})
+                return graph.invoke({"job_id": job_id, "user_prompt": state["user_prompt"]})
+
+            out = await loop.run_in_executor(None, _run_pipeline)
             state["status"] = "completed"
             state["final_video_path"] = out.get("final_video_path")
             await self._emit(job_id, "done", "completed", 100, {"final_video_path": state["final_video_path"]})
@@ -43,6 +47,7 @@ class PipelineService:
         finally:
             state["updated_at"] = datetime.now(timezone.utc).isoformat()
             write_json(Path("data/outputs") / job_id / "job_state.json", state)
+            gc.collect()
 
     def start_job(self, user_prompt: str) -> str:
         job_id = uuid4().hex
