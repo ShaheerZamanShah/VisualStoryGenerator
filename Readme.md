@@ -22,8 +22,9 @@
 14. [Running the Application](#running-the-application)
 15. [Docker Deployment](#docker-deployment)
 16. [Render Deployment](#render-deployment)
-17. [Running Tests](#running-tests)
-18. [Edit Agent](#edit-agent)
+17. [Free Deployment (Full Quality)](#free-deployment-full-quality)
+18. [Running Tests](#running-tests)
+19. [Edit Agent](#edit-agent)
 19. [Generated Output Files](#generated-output-files)
 20. [Environment Variables](#environment-variables)
 21. [Example Prompts](#example-prompts)
@@ -834,6 +835,79 @@ Browser → https://visualstory-frontend.onrender.com
 | Service times out generating video | Upgrade to Standard plan (2 GB RAM) |
 | Videos disappear after restart | Add persistent disk on `/app/data` (Starter+) |
 | Backend sleeps on Free tier | First request after idle takes ~30s to wake up |
+
+---
+
+## Free Deployment (Full Quality)
+
+**Honest answer:** Render's free tier (512 MB RAM) cannot reliably run the full video pipeline at perfect quality — video AI needs ~1–2 GB RAM. Cloud-mode optimizations help but are a compromise (960×540, lighter background removal).
+
+For **$0/month AND the complete pipeline working perfectly**, use one of these:
+
+### Option 1 — Oracle Cloud Always Free VM (recommended)
+
+Oracle gives you a **free ARM VM forever** with up to **4 CPUs and 24 GB RAM** — enough to run the full pipeline at 1280×720 with no compromises.
+
+1. Sign up at https://www.oracle.com/cloud/free/
+2. Create a VM: **Ubuntu 22.04**, shape **VM.Standard.A1.Flex** (4 OCPU, 24 GB RAM)
+3. Open inbound port **8080** in Oracle VCN security rules + Ubuntu firewall
+4. SSH into the VM and run:
+
+```bash
+# Install Docker
+sudo apt update && sudo apt install -y docker.io docker-compose-v2 git
+sudo usermod -aG docker $USER
+newgrp docker
+
+# Deploy
+git clone https://github.com/ShaheerZamanShah/VisualStoryGenerator.git
+cd VisualStoryGenerator
+cp .env.example .env
+nano .env          # set GROQ_API_KEY=your_key
+docker compose up -d --build
+```
+
+5. Open `http://YOUR_VM_PUBLIC_IP:8080`
+
+> Do **not** set `CLOUD_MODE=1` on Oracle — you have enough RAM for full quality (1280×720, rembg, subtitles).
+
+| | Render Free | Oracle Free VM |
+|--|-------------|----------------|
+| Cost | $0 | $0 |
+| RAM | 512 MB | up to 24 GB |
+| Full 1280×720 video | Unreliable | Yes |
+| Always on | No (sleeps) | Yes |
+| Setup effort | Easy | ~30 min one-time |
+
+### Option 2 — Cloudflare Tunnel + your PC (demo / portfolio)
+
+Run the pipeline on your Windows machine (where it already works perfectly) and expose it with a free public URL:
+
+```bash
+# Install cloudflared: https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/
+cloudflared tunnel --url http://localhost:8080
+```
+
+Use `docker compose up` locally, then share the Cloudflare URL in your CV. **Free and perfect quality**, but only works while your PC is on.
+
+### Option 3 — Render Free (compromise)
+
+Keep Render free for a **live portfolio URL**, accepting:
+- 960×540 cloud-mode output (not full HD)
+- Lighter background removal (not rembg)
+- May still fail on very long stories
+- Backend sleeps after 15 min idle
+
+Set `CLOUD_MODE=1` (already in `render.yaml`).
+
+### Summary — pick based on your goal
+
+| Goal | Best free option |
+|------|------------------|
+| CV link that always works perfectly | **Oracle Cloud VM** |
+| Quick demo while you're at your PC | **Cloudflare Tunnel + local Docker** |
+| Easiest setup, OK with lower quality | **Render Free** |
+| Paid but zero setup, reliable | **Render Standard ($25/mo)** |
 
 ---
 
